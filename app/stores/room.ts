@@ -4,7 +4,6 @@ import type {
     Room,
     Participant,
     Publisher,
-    JoinResponse,
     JoinedPayload,
     PublisherJoinedPayload,
     PublisherLeftPayload,
@@ -35,6 +34,7 @@ export const useRoomStore = defineStore('room', () => {
     const participants = ref<Map<string, Participant>>(new Map())
     const publishers = ref<Map<string, Publisher>>(new Map())
     const localStream = ref<MediaStream | null>(null)
+    const remoteStreams = ref<Map<string, MediaStream>>(new Map())
 
     // Settings
     const displayName = ref('')
@@ -100,7 +100,7 @@ export const useRoomStore = defineStore('room', () => {
             })
 
             // Process existing publishers (note: backend sends "publishers", not "existing_publishers")
-            if (joinResult.payload.publishers) {
+            if (joinResult.payload.publishers && joinResult.payload.publishers.length > 0) {
                 for (const pub of joinResult.payload.publishers) {
                     publishers.value.set(String(pub.feed_id), {
                         feed_id: String(pub.feed_id),
@@ -109,6 +109,9 @@ export const useRoomStore = defineStore('room', () => {
                         joined_at: new Date().toISOString()
                     })
                 }
+
+                // Subscribe to existing publishers after WebRTC is initialized
+                // This will be done after startPublishing() initializes the subscriber
             }
 
             // Add self to participants
@@ -138,6 +141,14 @@ export const useRoomStore = defineStore('room', () => {
      * Setup signaling event handlers
      */
     function setupSignalingHandlers(): void {
+        // Setup remote stream callback for subscriber
+        subscriber.onRemoteStream((feedId: string, stream: MediaStream) => {
+            console.log('[RoomStore] Received remote stream for feed:', feedId)
+            remoteStreams.value.set(feedId, stream)
+            // Trigger reactivity
+            remoteStreams.value = new Map(remoteStreams.value)
+        })
+
         // Publisher joined
         signaling.on('publisher_joined', (message) => {
             const payload = message.payload as PublisherJoinedPayload
@@ -165,13 +176,19 @@ export const useRoomStore = defineStore('room', () => {
             if (pub) {
                 toastStore.info(`${pub.display} left the room`)
                 publishers.value.delete(payload.feed_id)
+                remoteStreams.value.delete(payload.feed_id)
                 subscriber.unsubscribe(payload.feed_id)
             }
         })
 
         // Remote ICE candidates
         signaling.on('remote_candidate', async (message) => {
-            const payload = message.payload as any
+            const payload = message.payload as {
+                candidate: string
+                sdp_mid?: string
+                sdp_mline_index?: number
+                feed_id?: string
+            }
             if (payload.feed_id) {
                 await subscriber.addIceCandidate(payload.feed_id, {
                     candidate: payload.candidate,
@@ -244,6 +261,13 @@ export const useRoomStore = defineStore('room', () => {
             }
 
             console.log('[RoomStore] Publishing started')
+
+            // Now subscribe to any existing publishers that were in the room
+            const existingPublishers = Array.from(publishers.value.values())
+            for (const pub of existingPublishers) {
+                console.log('[RoomStore] Subscribing to existing publisher:', pub.feed_id, pub.display)
+                await subscribeToPublisher(pub.feed_id, pub.display, pub.user_id || '')
+            }
         } catch (error) {
             console.error('[RoomStore] Failed to start publishing:', error)
             toastStore.error('Failed to start camera')
@@ -361,6 +385,7 @@ export const useRoomStore = defineStore('room', () => {
         iceServers.value = []
         participants.value.clear()
         publishers.value.clear()
+        remoteStreams.value.clear()
         localStream.value = null
         isJoined.value = false
         isJoining.value = false
@@ -372,7 +397,7 @@ export const useRoomStore = defineStore('room', () => {
      * Get remote stream for a feed
      */
     function getRemoteStream(feedId: string): MediaStream | null {
-        return subscriber.getRemoteStream(feedId)
+        return remoteStreams.value.get(feedId) ?? null
     }
 
     return {
@@ -386,6 +411,7 @@ export const useRoomStore = defineStore('room', () => {
         participants: readonly(participants),
         publishers: readonly(publishers),
         localStream: readonly(localStream),
+        remoteStreams: readonly(remoteStreams),
         displayName,
         transcriptionEnabled,
 

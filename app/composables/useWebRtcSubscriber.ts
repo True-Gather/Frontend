@@ -51,22 +51,39 @@ export function useWebRtcSubscriber() {
             userId
         }
 
+        // ✅ CHANGED: store subscription early to avoid rare race conditions
+        subscriptions.value.set(feedId, subscription)
+
+        // ✅ CHANGED: helper to safely emit remote stream updates
+        const emitRemote = (stream: MediaStream) => {
+            if (onRemoteStreamCallback) onRemoteStreamCallback(feedId, stream)
+        }
+
         // Handle incoming tracks
         pc.ontrack = (event) => {
             console.log('[WebRTC Subscriber] Received track:', event.track.kind, 'for feed:', feedId)
 
+            // ✅ CHANGED: Prefer browser-provided stream if available
+            const incomingStream = event.streams?.[0] ?? null
+
+            // ✅ CHANGED: Ensure we always keep a single MediaStream per subscription
             if (!subscription.remoteStream) {
-                subscription.remoteStream = new MediaStream()
+                subscription.remoteStream = incomingStream ?? new MediaStream()
             }
 
-            subscription.remoteStream.addTrack(event.track)
+            // ✅ CHANGED: Avoid adding duplicate tracks
+            const existingTrackIds = new Set(subscription.remoteStream.getTracks().map(t => t.id))
+            if (!existingTrackIds.has(event.track.id)) {
+                subscription.remoteStream.addTrack(event.track)
+            } else {
+                console.log('[WebRTC Subscriber] Duplicate track ignored:', event.track.kind, event.track.id)
+            }
 
-            // Update the map to trigger reactivity
+            // ✅ CHANGED: Update map to trigger reactivity (clone)
             subscriptions.value.set(feedId, { ...subscription })
 
-            if (onRemoteStreamCallback) {
-                onRemoteStreamCallback(feedId, subscription.remoteStream)
-            }
+            // ✅ CHANGED: Emit the updated stream (single place)
+            emitRemote(subscription.remoteStream)
         }
 
         // Handle ICE candidates
@@ -74,6 +91,11 @@ export function useWebRtcSubscriber() {
             if (event.candidate && onIceCandidateCallback) {
                 onIceCandidateCallback(feedId, event.candidate)
             }
+        }
+
+        // ✅ CHANGED: extra debug info for ICE gathering
+        pc.onicegatheringstatechange = () => {
+            console.log('[WebRTC Subscriber] ICE gathering state:', pc.iceGatheringState, 'feed:', feedId)
         }
 
         // Handle connection state
@@ -94,13 +116,20 @@ export function useWebRtcSubscriber() {
         await pc.setRemoteDescription(offer)
         console.log('[WebRTC Subscriber] Set remote offer for feed:', feedId)
 
+        // ✅ CHANGED: Debug transceivers after remote offer
+        console.log(
+            '[WebRTC Subscriber] Transceivers:',
+            pc.getTransceivers().map(t => ({
+                mid: t.mid,
+                dir: t.direction,
+                current: t.currentDirection
+            }))
+        )
+
         // Create answer
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         console.log('[WebRTC Subscriber] Created answer for feed:', feedId)
-
-        // Store subscription
-        subscriptions.value.set(feedId, subscription)
 
         return answer.sdp!
     }
@@ -179,7 +208,7 @@ export function useWebRtcSubscriber() {
      * Cleanup all subscriptions
      */
     function cleanup(): void {
-        subscriptions.value.forEach((subscription, feedId) => {
+        subscriptions.value.forEach((subscription) => {
             if (subscription.remoteStream) {
                 subscription.remoteStream.getTracks().forEach(track => track.stop())
             }

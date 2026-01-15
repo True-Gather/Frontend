@@ -104,10 +104,25 @@ export function useWebRtcPublisher() {
             throw new Error('PeerConnection or stream not initialized')
         }
 
+        // ✅ CHANGED: prevent duplicate tracks if addTracks() called twice
+        const existingKinds = new Set(
+            pc.value.getSenders().map(s => s.track?.kind).filter(Boolean) as string[]
+        )
+
         localStream.value.getTracks().forEach(track => {
+            if (existingKinds.has(track.kind)) {
+                console.log('[WebRTC Publisher] Track already added, skipping:', track.kind) // ✅ CHANGED
+                return
+            }
             pc.value!.addTrack(track, localStream.value!)
             console.log('[WebRTC Publisher] Added track:', track.kind)
         })
+
+        // ✅ CHANGED: debug log of senders
+        console.log(
+            '[WebRTC Publisher] Senders after addTracks:',
+            pc.value.getSenders().map(s => s.track?.kind)
+        )
     }
 
     /**
@@ -118,10 +133,16 @@ export function useWebRtcPublisher() {
             throw new Error('PeerConnection not initialized')
         }
 
-        const offer = await pc.value.createOffer({
-            offerToReceiveAudio: false,
-            offerToReceiveVideo: false
-        })
+        // ✅ CHANGED: warn (and fail fast) if no tracks were added before offer
+        const senderKinds = pc.value.getSenders().map(s => s.track?.kind).filter(Boolean)
+        console.log('[WebRTC Publisher] Senders before offer:', senderKinds) // ✅ CHANGED
+
+        if (senderKinds.length === 0) {
+            throw new Error('No media tracks added. Call startCapture() + addTracks() BEFORE createOffer().') // ✅ CHANGED
+        }
+
+        // ✅ CHANGED: don't force offerToReceiveAudio/Video; let WebRTC build SDP based on tracks
+        const offer = await pc.value.createOffer()
 
         await pc.value.setLocalDescription(offer)
         console.log('[WebRTC Publisher] Created offer')

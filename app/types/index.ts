@@ -52,6 +52,11 @@ export type JoinResponse = {
   token: string
   ice_servers: RTCIceServer[]
   expires_in: number
+  participants?: Array<{
+    user_id: string
+    display: string
+    joined_at: string | number
+  }>
 }
 
 export type CreateInvitationRequest = {

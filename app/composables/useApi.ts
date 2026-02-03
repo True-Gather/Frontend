@@ -52,26 +52,27 @@ export function useApi() {
     /**
      * Join a room
      */
+      type JoinRoomApiResponse = {
+      room_id: string
+      user_id: string
+      ws_url: string
+      token: string
+      ice_servers: Array<{
+        urls: string[]
+        username?: string
+        credential?: string
+      }>
+      expires_in: number
+      participants?: Array<{
+        user_id: string
+        display: string
+        joined_at: string | number
+      }>
+    }
     async function joinRoom(roomId: string, data: JoinRoomRequest): Promise<JoinResponse> {
-        const response = await $fetch<{
-            room_id: string
-            user_id: string
-            ws_url: string
-            token: string
-            ice_servers: Array<{
-                urls: string[]
-                username?: string
-                credential?: string
-            }>
-            expires_in: number
-                  paricipants?: Array<{
-                    user_id: string
-                    display: string
-                    joined_at: string | number
-                  }>
-        }>(`${baseUrl}/rooms/${roomId}/join`, {
-            method: 'POST',
-            body: data,
+        const response = await $fetch<JoinRoomApiResponse>(`${baseUrl}/rooms/${roomId}/join`, {
+          method: 'POST',
+          body: data,
         })
 
     // Map ice_servers to RTCIceServer format
@@ -88,7 +89,7 @@ export function useApi() {
       token: response.token,
       ice_servers: iceServers,
       expires_in: response.expires_in,
-            participants: response.participants,
+      participants: response.participants,
     }
   }
 
@@ -178,6 +179,7 @@ export function useApi() {
         sendInviteEmail,
         getInvitation,
         useInvitation,
-        listInvitations
+        listInvitations,
+        getMediaStatus,
     }
 }
